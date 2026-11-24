@@ -2,7 +2,7 @@
 
 静态站点，基于 [RenderBuild](https://github.com/RavelloH/RenderBuild) 构建，GitHub Actions 自动发布到 GitHub Pages。
 
-线上地址：<https://themarter.github.io/>
+线上地址：<https://blog.marteria.top/>
 
 本地工作副本：`D:\迅雷下载\marter's space`（以此为准）
 
@@ -117,7 +117,7 @@ theresa: false   # 可选，这一页不挂右下角看板娘（连脚本都不�
 
 1. 把图片放进 `origin/album/photos/`（也可以直接在 GitHub 网页上上传到这个目录）
 2. 提交推送，等 Actions 构建完；本地就是 `npm run build`
-3. 打开 <https://themarter.github.io/album/> 就能看到
+3. 打开 <https://blog.marteria.top/album/> 就能看到
 
 支持 jpg / png / gif / webp / avif。按文件名自然排序（`1`、`2`、`10` 不会排成 `1、10、2`），
 开头的排序编号不进标题：`03-海边.jpg` → 标题「海边」。
