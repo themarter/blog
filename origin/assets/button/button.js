@@ -4,22 +4,20 @@
    需求：按一下 = 按下（并一直保持着），再按一下 = 弹起；
    而且这个「按着」的状态要留给下一个打开页面的人。
 
-   纯静态站自己存不住东西，所以状态丢给 ntfy.sh 的一个公开频道：
-     - 写：POST /<topic>   body = "press|down|12"
-     - 读：GET  /<topic>/json?poll=1&since=all  （返回缓存里的全部消息，取最后一条）
-     - 实时：GET /<topic>/sse  别的标签页/别人一按，这边立刻跟着动
-   频道是公开的，消息缓存 12 小时，所以 12 小时没人来看它就会自己弹回去。
-   连不上频道时退回 localStorage，至少「自己下次来」还是按着的。
+   状态存在自己搭的 Cloudflare Worker + KV 上（不依赖第三方）：
+     - 读：GET  https://img.marteria.top/api/button      -> {ok, state:{down,n,t}}
+     - 写：POST https://img.marteria.top/api/button      body = {down, n}
+       时间戳 t 由服务器盖（Date.now()），所以「上次按下」是全网一致的具体时间
+     - KV 不过期，所以不会像以前挂在 ntfy.sh 那样 12 小时自己弹回去
+   连不上服务器时退回 localStorage，至少「自己下次来」还是按着的。
    ============================================================ */
 
 (function () {
     'use strict';
 
-    const TOPIC = 'marter-space-shared-button-2f7c';
-    const BASE = 'https://ntfy.sh/' + TOPIC;
+    const API = 'https://img.marteria.top/api/button';
     const LOCAL_KEY = 'pb.state';
-    const POLL_MS = 30000;       // 兜底轮询，SSE 正常时也留着，成本可以忽略
-    const HEARTBEAT_AFTER = 6 * 3600 * 1000;   // 状态快过期时补发一次，续 12 小时
+    const POLL_MS = 30000;       // 兜底轮询
     const TIMEOUT_MS = 8000;
 
     const root = document.querySelector('.pb');
@@ -35,7 +33,6 @@
     /** @type {{down: boolean, n: number, t: number}} */
     let state = { down: false, n: 0, t: 0 };
     let pending = false;
-    let es = null;
 
     /* ---------------- 渲染 ---------------- */
 
@@ -49,12 +46,13 @@
         renderTime();
     }
 
-    function renderTime() {
-        if (!state.t) {
-            timeEl.textContent = '等第一个人';
-            return;
-        }
-        timeEl.textContent = relTime(state.t) + '有人' + (state.down ? '按下' : '弹起');
+    function pad(n) { return n < 10 ? '0' + n : String(n); }
+
+    /* 具体到秒的绝对时间，就近用浏览器本地时区 */
+    function absTime(ms) {
+        const d = new Date(ms);
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+            ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
     }
 
     function relTime(ms) {
@@ -65,7 +63,16 @@
         return Math.floor(d / 86400) + ' 天前';
     }
 
-    /* 首屏那几百毫秒还没问到远端，先把读数压暗，别让人看到假的「弹起」 */
+    function renderTime() {
+        if (!state.t) {
+            timeEl.textContent = '等第一个人';
+            return;
+        }
+        timeEl.textContent = absTime(state.t) + (state.down ? ' 按下' : ' 弹起') +
+            '（' + relTime(state.t) + '）';
+    }
+
+    /* 首屏那几百毫秒还没问到服务器，先把读数压暗，别让人看到假的「弹起」 */
     function startLoading() {
         root.classList.add('is-loading');
         btn.disabled = true;
@@ -91,8 +98,8 @@
     function setOffline(off) {
         root.classList.toggle('is-offline', off);
         footEl.textContent = off
-            ? '连不上共享频道，这一次只记在你这台机器的浏览器里。'
-            : '状态存在 ntfy.sh 的一个公开频道上，12 小时没人动它就会自己弹回去。';
+            ? '连不上服务器，这一次只记在你这台机器的浏览器里。'
+            : '状态存在 img.marteria.top 的 KV 里，不会过期；两个人同时按以服务器时间为准。';
     }
 
     /* ---------------- 本地缓存 ---------------- */
@@ -117,15 +124,9 @@
 
     /* ---------------- 远端读写 ---------------- */
 
-    function parseMsg(obj) {
-        if (!obj || obj.event !== 'message' || typeof obj.message !== 'string') return null;
-        const parts = obj.message.split('|');
-        if (parts[0] !== 'press') return null;
-        return {
-            down: parts[1] === 'down',
-            n: parseInt(parts[2], 10) || 0,
-            t: (Number(obj.time) || 0) * 1000
-        };
+    function normalize(raw) {
+        if (!raw || typeof raw.down !== 'boolean') return null;
+        return { down: raw.down, n: Number(raw.n) || 0, t: Number(raw.t) || 0 };
     }
 
     function ctrl() {
@@ -136,36 +137,29 @@
     }
 
     async function fetchState() {
-        const res = await fetch(BASE + '/json?poll=1&since=all', {
+        const res = await fetch(API + '?t=' + Date.now(), {
             cache: 'no-store',
             signal: ctrl()
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const text = await res.text();
-        let last = null;
-        text.split('\n').forEach(function (line) {
-            if (!line.trim()) return;
-            try {
-                const s = parseMsg(JSON.parse(line));
-                if (s) last = s;
-            } catch (e) { /* 半行/心跳，跳过 */ }
-        });
-        return last;
+        const body = await res.json();
+        return normalize(body && body.state);
     }
 
     async function publish(s) {
-        const res = await fetch(BASE, {
+        const res = await fetch(API, {
             method: 'POST',
-            body: 'press|' + (s.down ? 'down' : 'up') + '|' + s.n,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ down: s.down, n: s.n }),
             signal: ctrl()
         });
-        return res.ok;
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const body = await res.json();
+        return normalize(body && body.state);
     }
 
-    /* 收到的远端状态可能比本地旧：频道是最终一致的，刚发出去的那条，
-       下一次轮询/回拉不一定已经读得到。用「第几次按」当版本号，旧的丢掉，
-       否则会出现「按下去又被自己读回来的旧消息顶回弹起」。
-       注意首次加载不设这道门——那时候本地只是缓存，远端才是事实。 */
+    /* 收到的远端状态可能比本地旧：刚发出去的那条，下一次轮询不一定已经读得到。
+       用「第几次按」当版本号，旧的丢掉，否则会出现「按下去又被旧消息顶回弹起」。 */
     function applyRemote(remote) {
         if (!remote || remote.n < state.n) return false;
         apply(remote);
@@ -184,21 +178,16 @@
         saveLocal(next);
 
         try {
-            await publish(next);
+            const s = await publish(next);   // 服务器会把 t 换成它自己的时间
+            if (s) {
+                apply(s);
+                saveLocal(s);
+            }
             setOffline(false);
         } catch (e) {
             setOffline(true);
-            pending = false;
-            return;
         }
         pending = false;
-
-        // 以服务器上的顺序为准：万一两个人同时按，这里会把结果拉平
-        setTimeout(function () {
-            fetchState().then(function (s) {
-                if (applyRemote(s)) setOffline(false);
-            }).catch(function () { /* 忽略 */ });
-        }, 700);
     }
 
     btn.addEventListener('click', press);
@@ -214,49 +203,24 @@
     setTimeout(endLoading, 4000);
 
     (async function boot() {
-        let remote = null;
         try {
-            remote = await fetchState();
-            if (remote) {
-                apply(remote);
-                saveLocal(remote);
-            }
+            const remote = await fetchState();
+            if (remote) applyRemote(remote);
             setOffline(false);
         } catch (e) {
             setOffline(true);
         } finally {
             endLoading();
         }
-
-        // 没人按过时远端是空的，什么都不用做；
-        // 有状态且快到 12 小时了，就补发一次，别让它在没人来的时候悄悄过期
-        if (remote && Date.now() - remote.t > HEARTBEAT_AFTER) {
-            publish(remote).catch(function () { /* 忽略 */ });
-        }
     })();
-
-    // 实时：别人一按，这边跟着动
-    try {
-        es = new EventSource(BASE + '/sse');
-        es.onmessage = function (ev) {
-            try {
-                const s = parseMsg(JSON.parse(ev.data));
-                if (s) {
-                    applyRemote(s);
-                    setOffline(false);
-                }
-            } catch (e) { /* 心跳 */ }
-        };
-    } catch (e) { /* 不支持就算了，还有轮询 */ }
 
     setInterval(function () {
         fetchState().then(function (s) {
-            applyRemote(s);
-            setOffline(false);
+            if (applyRemote(s)) setOffline(false);
         }).catch(function () { /* 网络抖一下不提示，别吓人 */ });
     }, POLL_MS);
 
-    setInterval(renderTime, 15000);
+    setInterval(renderTime, 15000);   // 「几分钟前」自己走
 
     // 从别的标签页切回来，立刻对一次
     document.addEventListener('visibilitychange', function () {

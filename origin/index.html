@@ -8,7 +8,7 @@
     </p>
 </section>
 
-<!-- 公共按钮：状态存在 ntfy.sh 的公开频道上，跨浏览器共享。见 assets/button/button.js -->
+<!-- 公共按钮：状态存在自己搭的 Worker + KV（img.marteria.top/api/button），不依赖第三方。见 assets/button/button.js -->
 <section class="pb">
     <header class="pb__head">
         <p class="pb__kicker">Shared Button</p>
@@ -44,7 +44,7 @@
         <span id="pb-time">等第一个人</span>
     </div>
 
-    <p class="pb__foot" id="pb-foot">状态存在 ntfy.sh 的一个公开频道上，12 小时没人动它就会自己弹回去。</p>
+    <p class="pb__foot" id="pb-foot">状态存在 img.marteria.top 的 KV 里，不会过期；两个人同时按以服务器时间为准。</p>
 </section>
 
 <script src="/assets/button/button.js" defer></script>
