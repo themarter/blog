@@ -1,10 +1,16 @@
 # Marter 的个人空间
 
-静态站点，基于 [RenderBuild](https://github.com/RavelloH/RenderBuild) 构建，GitHub Actions 自动发布到 GitHub Pages。
+静态站点，基于 [RavelloH/RenderBuild](https://github.com/RavelloH/RenderBuild) 构建，GitHub Actions 自动发布到 GitHub Pages。
 
-线上地址：<https://blog.marteria.top/>
+## 两个站点，同一份内容
 
-本地工作副本：`D:\迅雷下载\marter's space`（以此为准）
+| 站点 | 地址 | 说明 |
+|---|---|---|
+| **主站** | <https://blog.marteria.top/> | 本仓库直接构建部署（自定义域名，DNS 在 Cloudflare，**仅 DNS 不代理**） |
+| 备用站 | <https://themarter.github.io/> | 仓库 [themarter.github.io](https://github.com/themarter/themarter.github.io)，Actions 拉本仓库 `main` 构建，每小时同步 |
+
+> 改内容只改本仓库。备用站会自动跟上（`cron: '17 * * * *'` + 手动 `workflow_dispatch`），
+> 不用手动往两个仓库推。
 
 ## 目录结构
 
